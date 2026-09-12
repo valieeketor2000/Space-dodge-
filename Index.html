@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Space Dodge</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="theme-color" content="#060812">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #060812;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #e8ecf7;
+    overflow: hidden;
+    touch-action: none;
+  }
+  #app {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100%; padding: 12px;
+  }
+  #hud {
+    width: 100%; max-width: 420px;
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px; padding: 0 4px;
+  }
+  #hud .label { font-size: 12px; color: #7b86ad; letter-spacing: 0.02em; }
+  #score { font-size: 22px; font-weight: 600; color: #fff; }
+  #best { font-size: 13px; color: #7b86ad; }
+  #stage-wrap {
+    position: relative; width: 100%; max-width: 420px;
+    aspect-ratio: 3 / 4;
+    border-radius: 16px;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 0%, #131a33 0%, #070a16 70%);
+    border: 1px solid #1b2340;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; background: rgba(6,8,18,0.88); text-align: center; padding: 0 2rem;
+  }
+  #overlay h1 { font-size: 20px; font-weight: 600; margin: 0; color: #fff; }
+  #overlay p { font-size: 13px; color: #9aa4c7; margin: 0; line-height: 1.5; }
+  #statusRow { font-size: 13px; color: #8ee6c2; }
+  button {
+    background: #4c6fff; color: #fff; border: none; border-radius: 10px;
+    padding: 12px 28px; font-size: 15px; font-weight: 600;
+    cursor: pointer; margin-top: 4px;
+  }
+  button:active { transform: scale(0.97); }
+  button.ghost {
+    background: transparent; border: 1px solid #2a3358; color: #b7c0e5;
+  }
+  #controls {
+    width: 100%; max-width: 420px; display: flex; gap: 10px; margin-top: 10px;
+  }
+  #controls button {
+    flex: 1; height: 52px; font-size: 22px; background: #171d38; border: 1px solid #262e54;
+  }
+  #legend {
+    width: 100%; max-width: 420px; display: flex; justify-content: center; gap: 16px;
+    margin-top: 8px; font-size: 11px; color: #6b769c;
+  }
+  #legend span { display: flex; align-items: center; gap: 4px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+  #splash {
+    position: fixed; inset: 0; z-index: 999;
+    background: #060812;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px;
+    transition: opacity 0.4s ease;
+  }
+  #splash.hide { opacity: 0; pointer-events: none; }
+  #splash img { width: 96px; height: 96px; border-radius: 22px; }
+  #splash .name { font-size: 20px; font-weight: 600; letter-spacing: 0.02em; color: #fff; }
+  #splash .spinner {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 3px solid #1e2748; border-top-color: #4c6fff;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="splash">
+  <img src="./icon-192.png" alt="">
+  <div class="name">Space Dodge</div>
+  <div class="spinner"></div>
+</div>
+<div id="app">
+  <div id="hud">
+    <div>
+      <div class="label">Score</div>
+      <div id="score">0</div>
+    </div>
+    <div style="text-align:right">
+      <div class="label">Best</div>
+      <div id="best">0</div>
+    </div>
+  </div>
+  <div id="stage-wrap">
+    <canvas id="c"></canvas>
+    <div id="overlay">
+      <h1>Space Dodge</h1>
+      <p>Steer your ship through the asteroid field.<br>Grab the blue shield and green slow-time drops.</p>
+      <button id="startBtn">Launch</button>
+    </div>
+  </div>
+  <div id="controls">
+    <button id="leftBtn" aria-label="Move left">&#8592;</button>
+    <button id="rightBtn" aria-label="Move right">&#8594;</button>
+  </div>
+  <div id="legend">
+    <span><span class="dot" style="background:#4c6fff"></span>Shield</span>
+    <span><span class="dot" style="background:#3ddc97"></span>Slow-time</span>
+    <span><span class="dot" style="background:#8892b0"></span>Asteroid</span>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage-wrap');
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const leftBtn = document.getElementById('leftBtn');
+const rightBtn = document.getElementById('rightBtn');
+
+let W, H, dpr;
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = stage.clientWidth;
+  H = stage.clientHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resize();
+window.addEventListener('resize', resize);
+
+let best = 0;
+try {
+  const stored = parseInt(sessionStorage.getItem('spaceDodgeBest') || '0', 10);
+  if (!isNaN(stored)) best = stored;
+} catch (e) { best = 0; }
+bestEl.textContent = best;
+
+let ship, rocks, drops, score, running, spawnTimer, dropTimer, moveDir, lastTime;
+let shieldTime = 0, slowTime = 0;
+const stars = Array.from({length: 60}, () => ({
+  x: Math.random(), y: Math.random(), r: Math.random() * 1.4 + 0.3, tw: Math.random() * Math.PI * 2
+}));
+
+function reset() {
+  ship = { x: W / 2, targetX: W / 2, r: 15 };
+  rocks = [];
+  drops = [];
+  score = 0;
+  running = false;
+  spawnTimer = 0;
+  dropTimer = 0;
+  moveDir = 0;
+  shieldTime = 0;
+  slowTime = 0;
+  scoreEl.textContent = '0';
+}
+reset();
+
+function spawnRock() {
+  const w = 26 + Math.random() * 34;
+  rocks.push({ x: Math.random() * (W - w), y: -30, w, h: w * 0.85, rot: Math.random() * Math.PI });
+}
+function spawnDrop() {
+  const kind = Math.random() < 0.5 ? 'shield' : 'slow';
+  const size = 16;
+  drops.push({ x: Math.random() * (W - size) + size / 2, y: -20, r: size / 2, kind });
+}
+
+function drawStars() {
+  ctx.save();
+  for (const s of stars) {
+    const alpha = 0.4 + 0.4 * Math.sin(s.tw + performance.now() / 800);
+    ctx.fillStyle = `rgba(200,210,255,${Math.max(0.15, alpha)})`;
+    ctx.beginPath();
+    ctx.arc(s.x * W, s.y * H, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawShip(x, y, shielded) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (shielded) {
+    ctx.strokeStyle = 'rgba(76,111,255,0.9)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, ship.r + 7, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#e8ecf7';
+  ctx.beginPath();
+  ctx.moveTo(0, -ship.r);
+  ctx.lineTo(ship.r * 0.8, ship.r * 0.8);
+  ctx.lineTo(0, ship.r * 0.4);
+  ctx.lineTo(-ship.r * 0.8, ship.r * 0.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#4c6fff';
+  ctx.beginPath();
+  ctx.arc(0, -ship.r * 0.1, ship.r * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawRock(r) {
+  ctx.save();
+  ctx.translate(r.x + r.w / 2, r.y + r.h / 2);
+  ctx.rotate(r.rot);
+  ctx.fillStyle = '#8892b0';
+  ctx.beginPath();
+  const n = 7;
+  for (let i = 0; i < n; i++) {
+    const ang = (i / n) * Math.PI * 2;
+    const rad = (r.w / 2) * (0.75 + 0.25 * Math.sin(i * 2.1));
+    const px = Math.cos(ang) * rad, py = Math.sin(ang) * rad * (r.h / r.w);
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawDrop(d) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.fillStyle = d.kind === 'shield' ? '#4c6fff' : '#3ddc97';
+  ctx.beginPath();
+  ctx.arc(0, 0, d.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#060812';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(d.kind === 'shield' ? 'S' : '~', 0, 1);
+  ctx.restore();
+}
+
+function loop(t) {
+  if (!lastTime) lastTime = t;
+  let dt = Math.min((t - lastTime) / 16.67, 3);
+  lastTime = t;
+
+  if (running) {
+    const slowed = slowTime > 0;
+    const dtGame = slowed ? dt * 0.45 : dt;
+
+    ship.x += (ship.targetX - ship.x) * 0.28;
+    if (moveDir !== 0) ship.targetX += moveDir * 5.2 * dt;
+    ship.targetX = Math.max(ship.r, Math.min(W - ship.r, ship.targetX));
+
+    spawnTimer += dt;
+    const spawnRate = Math.max(18, 42 - score / 12);
+    if (spawnTimer > spawnRate) { spawnTimer = 0; spawnRock(); }
+
+    dropTimer += dt;
+    if (dropTimer > 260) { dropTimer = 0; if (Math.random() < 0.8) spawnDrop(); }
+
+    const speed = 2.1 + score / 220;
+    for (const r of rocks) r.y += speed * dtGame;
+    rocks = rocks.filter(r => r.y < H + 30);
+
+    for (const d of drops) d.y += speed * 0.9 * dtGame;
+    drops = drops.filter(d => d.y < H + 20);
+
+    if (shieldTime > 0) shieldTime -= dt;
+    if (slowTime > 0) slowTime -= dt;
+
+    const shipY = H - 46;
+    for (const r of rocks) {
+      const cx = Math.max(r.x, Math.min(ship.x, r.x + r.w));
+      const cy = Math.max(r.y, Math.min(shipY, r.y + r.h));
+      const dx = ship.x - cx, dy = shipY - cy;
+      if (dx * dx + dy * dy < ship.r * ship.r) {
+        if (shieldTime > 0) {
+          r.y = H + 999;
+        } else {
+          running = false;
+          endGame();
+        }
+      }
+    }
+    for (const d of drops) {
+      const dx = ship.x - d.x, dy = shipY - d.y;
+      if (dx * dx + dy * dy < (ship.r + d.r) * (ship.r + d.r)) {
+        if (d.kind === 'shield') shieldTime = 240; else slowTime = 200;
+        d.y = H + 999;
+      }
+    }
+    drops = drops.filter(d => d.y < H + 20);
+
+    score += dt * 0.5;
+    scoreEl.textContent = Math.floor(score);
+  }
+
+  ctx.clearRect(0, 0, W, H);
+  drawStars();
+  for (const r of rocks) drawRock(r);
+  for (const d of drops) drawDrop(d);
+  drawShip(ship.x, H - 46, shieldTime > 0);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function endGame() {
+  const finalScore = Math.floor(score);
+  if (finalScore > best) {
+    best = finalScore;
+    bestEl.textContent = best;
+    try { sessionStorage.setItem('spaceDodgeBest', String(best)); } catch (e) {}
+  }
+  overlay.style.display = 'flex';
+  overlay.innerHTML = '';
+  const h1 = document.createElement('h1');
+  h1.textContent = 'Ship lost';
+  const p = document.createElement('p');
+  p.textContent = 'Score: ' + finalScore;
+  const btn = document.createElement('button');
+  btn.textContent = 'Launch again';
+  btn.onclick = () => { reset(); overlay.style.display = 'none'; running = true; };
+  overlay.appendChild(h1);
+  overlay.appendChild(p);
+  overlay.appendChild(btn);
+}
+
+startBtn.onclick = () => { overlay.style.display = 'none'; running = true; };
+
+let dragging = false;
+stage.addEventListener('pointerdown', (e) => {
+  dragging = true;
+  const rect = stage.getBoundingClientRect();
+  ship.targetX = e.clientX - rect.left;
+});
+stage.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const rect = stage.getBoundingClientRect();
+  ship.targetX = e.clientX - rect.left;
+});
+window.addEventListener('pointerup', () => { dragging = false; });
+
+leftBtn.addEventListener('pointerdown', () => { moveDir = -1; });
+leftBtn.addEventListener('pointerup', () => { moveDir = 0; });
+leftBtn.addEventListener('pointerleave', () => { moveDir = 0; });
+rightBtn.addEventListener('pointerdown', () => { moveDir = 1; });
+rightBtn.addEventListener('pointerup', () => { moveDir = 0; });
+rightBtn.addEventListener('pointerleave', () => { moveDir = 0; });
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
+window.addEventListener('load', () => {
+  const splash = document.getElementById('splash');
+  setTimeout(() => {
+    splash.classList.add('hide');
+    setTimeout(() => splash.remove(), 450);
+  }, 600);
+});
+</script>
+</body>
+</html>
